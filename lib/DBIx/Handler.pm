@@ -1,7 +1,7 @@
 package DBIx::Handler;
 use strict;
 use warnings;
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 use DBI 1.605;
 use DBIx::TransactionManager 1.09;
@@ -10,13 +10,15 @@ use Carp ();
 sub new {
     my $class = shift;
 
-    my $on_connect_do = scalar(@_) == 5 ? pop @_ : +{};
+    my $opts = scalar(@_) == 5 ? pop @_ : +{};
     bless {
         _connect_info    => [@_],
         _pid             => undef,
         _dbh             => undef,
-        on_connect_do    => $on_connect_do->{on_connect_do}    || undef,
-        on_disconnect_do => $on_connect_do->{on_disconnect_do} || undef,
+        trace_query      => $opts->{trace_query}      || 0,
+        result_class     => $opts->{result_class}     || undef,
+        on_connect_do    => $opts->{on_connect_do}    || undef,
+        on_disconnect_do => $opts->{on_disconnect_do} || undef,
     }, $class;
 }
 
@@ -94,6 +96,78 @@ sub _run_on {
 
 sub DESTROY { $_[0]->disconnect }
 
+sub result_class {
+    my ($self, $result_class) = @_;
+    $self->{result_class} = $result_class if $result_class;
+    $self->{result_class};
+}
+
+sub trace_query {
+    my ($self, $flag) = @_;
+    $self->{trace_query} = $flag if defined $flag;
+    $self->{trace_query};
+}
+
+sub query {
+    my ($self, $sql, $args) = @_;
+
+    my $bind;
+    if (ref($args) eq 'HASH') {
+        ($sql, $bind) = $self->_replace_named_placeholder($sql, $args);
+    }
+
+    if ($self->trace_query) {
+        $sql = $self->_trace_query_set_comment($sql);
+    }
+
+    my $sth;
+    eval {
+        $sth = $self->dbh->prepare($sql);
+        $sth->execute(@{$bind || []});
+    };
+    if (my $error = $@) {
+        Carp::croak($error);
+    }
+
+    my $result_class = $self->result_class;
+    $result_class ? $result_class->new($self, $sth) : $sth;
+}
+
+sub _replace_named_placeholder {
+    my ($self, $sql, $args) = @_;
+
+    my %named_bind = %{$args};
+    my @bind;
+    $sql =~ s{:(\w+)}{
+        Carp::croak("$1 does not exists in hash") if !exists $named_bind{$1};
+        if ( ref $named_bind{$1} && ref $named_bind{$1} eq "ARRAY" ) {
+            push @bind, @{ $named_bind{$1} };
+            my $tmp = join ',', map { '?' } @{ $named_bind{$1} };
+            "($tmp)";
+        } else {
+            push @bind, $named_bind{$1};
+            '?'
+        }
+    }ge;
+
+    return ($sql, \@bind);
+}
+
+sub _trace_query_set_comment {
+    my ($self, $sql) = @_;
+
+    my $i=0;
+    while ( my (@caller) = caller($i++) ) {
+        next if ( $caller[0]->isa( __PACKAGE__ ) );
+        my $comment = "$caller[1] at line $caller[2]";
+        $comment =~ s/\*\// /g;
+        $sql = "/* $comment */\n$sql";
+        last;
+    }
+
+    $sql;
+}
+
 # --------------------------------------------------------------------------------
 # for transaction
 sub txn_manager {
@@ -131,7 +205,10 @@ sub txn {
     my $wantarray = wantarray;
     my $txn = $self->txn_scope;
 
-    my @ret = eval { $coderef->($self->dbh) };
+    my @ret = eval { 
+        return $coderef->($self->dbh) if not defined $wantarray;
+        return $wantarray ? $coderef->($self->dbh) : scalar $coderef->($self->dbh);
+    };
 
     if (my $error = $@) {
         $txn->rollback;
@@ -231,6 +308,20 @@ are you in transaction?
 execute $coderef in auto transaction scope.
 
 begin transaction before $coderef execute, do $coderef with database handle, after commit or rollback transaciont.
+
+=item my $sth = $handler->query($sql, [\@bind | \%bind]);
+
+exexute query. return database statement handler. 
+
+=item $handler->result_class($result_class_name);
+
+set result_class package name.
+
+this result_class use to be create query method response object.
+
+=item $handler->trace_query($flag);
+
+inject sql comment when trace_query is true. 
 
 =head1 AUTHOR
 
