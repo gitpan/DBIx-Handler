@@ -1,7 +1,7 @@
 package DBIx::Handler;
 use strict;
 use warnings;
-our $VERSION = '0.04';
+our $VERSION = '0.05';
 
 use DBI 1.605;
 use DBIx::TransactionManager 1.09;
@@ -172,6 +172,21 @@ sub _trace_query_set_comment {
     $sql;
 }
 
+sub run {
+    my ($self, $coderef) = @_;
+    my $wantarray = wantarray;
+
+    my @ret = eval {
+        my $dbh = $self->dbh;
+        $wantarray ? $coderef->($dbh) : scalar $coderef->($dbh);
+    };
+    if (my $error = $@) {
+        Carp::croak($error);
+    }
+
+    $wantarray ? @ret : $ret[0];
+}
+
 # --------------------------------------------------------------------------------
 # for transaction
 sub txn_manager {
@@ -209,9 +224,9 @@ sub txn {
     my $wantarray = wantarray;
     my $txn = $self->txn_scope;
 
-    my @ret = eval { 
-        return $coderef->($self->dbh) if not defined $wantarray;
-        return $wantarray ? $coderef->($self->dbh) : scalar $coderef->($self->dbh);
+    my @ret = eval {
+        my $dbh = $self->dbh;
+        $wantarray ? $coderef->($dbh) : scalar $coderef->($dbh);
     };
 
     if (my $error = $@) {
@@ -228,7 +243,6 @@ sub txn {
 sub txn_begin    { $_[0]->txn_manager->txn_begin    }
 sub txn_rollback { $_[0]->txn_manager->txn_rollback }
 sub txn_commit   { $_[0]->txn_manager->txn_commit   }
-sub txn_end      { $_[0]->txn_manager->txn_end      }
 
 1;
 
@@ -303,10 +317,6 @@ commit transaction.
 
 rollback transaction.
 
-=item $handler->txn_end
-
-finish transaction.
-
 =item $handler->in_txn
 
 are you in transaction?
@@ -316,6 +326,34 @@ are you in transaction?
 execute $coderef in auto transaction scope.
 
 begin transaction before $coderef execute, do $coderef with database handle, after commit or rollback transaciont.
+
+  $handler->txn(sub {
+      my $dbh = shift;
+      $dbh->do(...);
+  });
+
+equals to:
+
+  $handler->txn_begin;
+      my $dbh = $handler->dbh;
+      $dbh->do(...);
+  $handler->txn_rollback;
+
+=item my @result = $handler->run($coderef);
+
+exexute $coderef.
+
+  my $rs = $handler->run(sub {
+      my $dbh = shift;
+      $dbh->selectall_arrayref(...);
+  });
+
+or
+
+  my @result = $handler->run(sub {
+      my $dbh = shift;
+      $dbh->selectrow_array('...');
+  });
 
 =item my $sth = $handler->query($sql, [\@bind | \%bind]);
 
