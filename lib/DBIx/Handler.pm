@@ -1,7 +1,7 @@
 package DBIx::Handler;
 use strict;
 use warnings;
-our $VERSION = '0.05';
+our $VERSION = '0.06';
 
 use DBI 1.605;
 use DBIx::TransactionManager 1.09;
@@ -20,13 +20,14 @@ sub new {
         result_class     => $opts->{result_class}     || undef,
         on_connect_do    => $opts->{on_connect_do}    || undef,
         on_disconnect_do => $opts->{on_disconnect_do} || undef,
+        dbi_class => $opts->{dbi_class} || "DBI",
     }, $class;
 }
 
 sub _connect {
     my $self = shift;
 
-    my $dbh = $self->{_dbh} = DBI->connect(@{$self->{_connect_info}});
+    my $dbh = $self->{_dbh} = $self->{dbi_class}->connect(@{$self->{_connect_info}});
 
     if (DBI->VERSION > 1.613 && (@{$self->{_connect_info}} < 4 || !exists $self->{_connect_info}[3]{AutoInactiveDestroy})) {
         $dbh->STORE(AutoInactiveDestroy => 1);
@@ -267,6 +268,8 @@ DBIx::Hanler provide scope base transaction, fork safe dbh handling, simple.
 
 =head1 METHODS
 
+=over 4
+
 =item my $handler = DBIx::Handler->new($dsn, $user, $pass, $opts);
 
 get database handling instance.
@@ -368,6 +371,8 @@ this result_class use to be create query method response object.
 =item $handler->trace_query($flag);
 
 inject sql comment when trace_query is true. 
+
+=back
 
 =head1 AUTHOR
 
