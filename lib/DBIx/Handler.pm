@@ -1,7 +1,7 @@
 package DBIx::Handler;
 use strict;
 use warnings;
-our $VERSION = '0.06';
+our $VERSION = '0.07';
 
 use DBI 1.605;
 use DBIx::TransactionManager 1.09;
@@ -75,6 +75,7 @@ sub disconnect {
 
     my $dbh = $self->_seems_connected or return;
 
+    $self->{txn_manager} = undef;
     $self->_run_on('on_disconnect_do', $dbh);
     $dbh->STORE(CachedKids => {});
     $dbh->disconnect;
@@ -115,7 +116,7 @@ sub query {
 
     my $bind;
     if (ref($args[0]) eq 'HASH') {
-        ($sql, $bind) = $self->_replace_named_placeholder($sql, $args[0]);
+        ($sql, $bind) = $self->replace_named_placeholder($sql, $args[0]);
     }
     else {
         $bind = ref($args[0]) eq 'ARRAY' ? $args[0] : \@args;
@@ -138,7 +139,7 @@ sub query {
     $result_class ? $result_class->new($self, $sth) : $sth;
 }
 
-sub _replace_named_placeholder {
+sub replace_named_placeholder {
     my ($self, $sql, $args) = @_;
 
     my %named_bind = %{$args};
